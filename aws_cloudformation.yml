@@ -1,0 +1,141 @@
+Parameters:
+  Keyname:
+    Type: String
+Resources: 
+  VPC: 
+    Type: AWS::EC2::VPC
+    Properties:
+      EnableDnsSupport: true 
+      EnableDnsHostnames: true 
+      CidrBlock: 10.0.0.0/16 
+      Tags: 
+      - Key: Application  
+        Value: !Ref AWS::StackName 
+      - Key: Network  
+        Value: Public 
+  PublicSubnet: 
+    Type: AWS::EC2::Subnet 
+    Properties: 
+      VpcId:  !Ref VPC 
+      CidrBlock: 10.0.0.0/24 
+      Tags: 
+      - Key: Application  
+        Value:  !Ref AWS::StackName 
+      - Key: Network  
+        Value: Public
+  InternetGateway: 
+    Type: AWS::EC2::InternetGateway
+  GatewayToInternet: 
+    Type: AWS::EC2::VPCGatewayAttachment 
+    Properties: 
+      VpcId:  !Ref VPC 
+      InternetGatewayId:  !Ref InternetGateway
+  PublicRouteTable: 
+    Type: AWS::EC2::RouteTable 
+    Properties: 
+      VpcId:  !Ref VPC
+  PublicRoute: 
+    Type: AWS::EC2::Route 
+    DependsOn: GatewayToInternet 
+    Properties: 
+      RouteTableId:  !Ref PublicRouteTable 
+      DestinationCidrBlock: 0.0.0.0/0 
+      GatewayId:  !Ref InternetGateway
+  PublicSubnetRouteTableAssociation: 
+    Type: AWS::EC2::SubnetRouteTableAssociation 
+    Properties: 
+      SubnetId:  !Ref PublicSubnet 
+      RouteTableId:  !Ref PublicRouteTable
+  TestSecurityGroup: 
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: TestSG
+      VpcId: !Ref VPC
+      SecurityGroupIngress: 
+        - CidrIp : 0.0.0.0/0
+          IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+        - CidrIp : 0.0.0.0/0
+          IpProtocol : tcp 
+          FromPort : 80 
+          ToPort : 80
+  WindowsSecurityGroup: 
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupDescription: WinSG
+      VpcId: !Ref VPC
+      SecurityGroupIngress: 
+        - CidrIp : 0.0.0.0/0
+          IpProtocol: tcp
+          FromPort: 3389
+          ToPort: 3389
+        - CidrIp : 0.0.0.0/0
+          IpProtocol : tcp 
+          FromPort : 80 
+          ToPort : 80
+  PublicInstance: 
+    Type: AWS::EC2::Instance 
+    DependsOn: GatewayToInternet 
+    Properties: 
+      InstanceType: t2.micro 
+      ImageId: ami-643b1972 
+      UserData:
+        "Fn::Base64":
+          !Sub |
+            #!/bin/bash
+            yum update -y aws-cfn-bootstrap 
+            /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource PublicInstance --configsets apache --region ${AWS::Region}
+            yum -y update
+      KeyName:
+        !Ref Keyname
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true 
+          DeviceIndex: 0
+          GroupSet:
+            - !Ref TestSecurityGroup
+          DeleteOnTermination: true 
+          SubnetId:  !Ref PublicSubnet
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          apache:
+            - "install"
+        install: 
+          packages: 
+            yum:
+              httpd: []
+          services:
+            sysvinit:
+              httpd:
+                enabled: "true"
+                ensureRunning: "true"
+  WindowsInstance: 
+    Type: AWS::EC2::Instance 
+    DependsOn: GatewayToInternet 
+    Properties: 
+      InstanceType: t2.micro 
+      ImageId: ami-e196b0f7
+      UserData:
+        "Fn::Base64":
+          !Sub |
+            <powershell>
+              Add-WindowsFeature Web-WebServer -includeAllSubFeature
+              Add-WindowsFeature Web-Mgmt-Tools -includeAllSubFeature
+            </powershell>
+      KeyName:
+        !Ref Keyname
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true 
+          DeviceIndex: 0
+          GroupSet:
+            - !Ref WindowsSecurityGroup
+          DeleteOnTermination: true 
+          SubnetId:  !Ref PublicSubnet
+Outputs:  
+  InstanceID:
+    Description: PublicIP
+    Value: !GetAtt PublicInstance.PublicDnsName
+
+
+
